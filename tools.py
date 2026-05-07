@@ -2,12 +2,126 @@ from tavily import TavilyClient
 from dotenv import load_dotenv
 import os 
 import subprocess
+import shutil
 
 
 load_dotenv(dotenv_path=".env")
 client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+
+MAX_SHELL_OUTPUT_CHARS = 5_000
+DEFAULT_SHELL_OUTPUT_CHARS = MAX_SHELL_OUTPUT_CHARS
                       
-       
+
+def _git_bash_executable():
+    """Return the Git Bash executable path, avoiding Windows/WSL bash shims."""
+    candidates = [
+        os.getenv("GIT_BASH_PATH"),
+        os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"),
+        os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "Git", "usr", "bin", "bash.exe"),
+        os.path.join(os.getenv("PROGRAMFILES", ""), "Git", "bin", "bash.exe"),
+        os.path.join(os.getenv("PROGRAMFILES", ""), "Git", "usr", "bin", "bash.exe"),
+        os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Git", "bin", "bash.exe"),
+        os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Git", "usr", "bin", "bash.exe"),
+    ]
+
+    git_path = shutil.which("git")
+    if git_path:
+        git_root = os.path.dirname(os.path.dirname(git_path))
+        candidates.extend([
+            os.path.join(git_root, "bin", "bash.exe"),
+            os.path.join(git_root, "usr", "bin", "bash.exe"),
+        ])
+
+    path_bash = shutil.which("bash")
+    if path_bash and "\\git\\" in os.path.normcase(os.path.normpath(path_bash)):
+        candidates.append(path_bash)
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+
+    raise FileNotFoundError(
+        "Git Bash was not found. Install Git for Windows or set GIT_BASH_PATH "
+        "to the full path of bash.exe."
+    )
+
+
+def _normalize_output_limit(max_output_chars):
+    try:
+        limit = int(max_output_chars)
+    except (TypeError, ValueError):
+        limit = DEFAULT_SHELL_OUTPUT_CHARS
+
+    return max(0, min(limit, MAX_SHELL_OUTPUT_CHARS))
+
+
+def _ensure_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _truncate_text(text, limit):
+    if len(text) <= limit:
+        return text, False
+    if limit <= 0:
+        return "", True
+
+    marker = "\n...[truncated output]...\n"
+    head_len = 0
+    tail_len = 0
+    for _ in range(3):
+        if limit <= len(marker):
+            return text[:limit], True
+
+        head_len = (limit - len(marker)) // 2
+        tail_len = limit - len(marker) - head_len
+        omitted_chars = len(text) - head_len - tail_len
+        marker = f"\n...[truncated {omitted_chars} chars]...\n"
+
+    return text[:head_len] + marker + text[-tail_len:], True
+
+
+def _limit_shell_output(stdout, stderr, max_output_chars):
+    stdout = _ensure_text(stdout)
+    stderr = _ensure_text(stderr)
+    limit = _normalize_output_limit(max_output_chars)
+    total_chars = len(stdout) + len(stderr)
+
+    if total_chars <= limit:
+        return {
+            "stdout": stdout,
+            "stderr": stderr,
+            "output_truncated": False,
+            "original_stdout_chars": len(stdout),
+            "original_stderr_chars": len(stderr),
+            "max_output_chars": limit,
+        }
+
+    if stdout and stderr:
+        stdout_limit = limit * len(stdout) // total_chars
+        stderr_limit = limit - stdout_limit
+    elif stdout:
+        stdout_limit = limit
+        stderr_limit = 0
+    else:
+        stdout_limit = 0
+        stderr_limit = limit
+
+    limited_stdout, stdout_truncated = _truncate_text(stdout, stdout_limit)
+    limited_stderr, stderr_truncated = _truncate_text(stderr, stderr_limit)
+
+    return {
+        "stdout": limited_stdout,
+        "stderr": limited_stderr,
+        "output_truncated": stdout_truncated or stderr_truncated,
+        "original_stdout_chars": len(stdout),
+        "original_stderr_chars": len(stderr),
+        "max_output_chars": limit,
+    }
+
 
 def web_search(query : str,search_depth='basic',max_results=5,timerange=None,chunks_per_source=3):
     """Search across the web for any information,news,update or help.\n
@@ -76,18 +190,23 @@ def web_fetch(url : str,query=None,chunks_per_source=3,extract_depth="basic"):
     return response
 
 
-def shell(command : str):
-    """Execute a Windows shell command for an agent and return structured output.
+def shell(command : str, max_output_chars=DEFAULT_SHELL_OUTPUT_CHARS):
+    """Execute a Git Bash command for an agent and return structured output.
 
     This tool gives the agent controlled access to the local command line through
-    `cmd /c`. Use it for operational tasks such as inspecting files, listing
+    Git Bash (`bash -lc`). Use it for operational tasks such as inspecting files, listing
     directories, running scripts, checking dependencies, or launching simple
     diagnostic commands.
+    Prefer Git Bash / POSIX-style commands such as ls, pwd, grep, sed, cat, and
+    python invocations available from the shell.
 
     Parameters:
     - command: The exact command to execute as a string. The agent should prefer
       precise, non-interactive commands and avoid destructive operations unless
       the user explicitly requested them.
+    - max_output_chars: Maximum total characters to return across stdout and
+      stderr. Use a smaller value for quick checks. Values above 5,000 are
+      capped to keep tool output compact for the LLM. By default, set to 5,000.
 
     Returns:
     A dictionary with:
@@ -95,6 +214,10 @@ def shell(command : str):
     - return_code: The process exit code.
     - stdout: Text written to standard output.
     - stderr: Text written to standard error.
+    - output_truncated: True when stdout or stderr was shortened.
+    - original_stdout_chars: Original stdout length before truncation.
+    - original_stderr_chars: Original stderr length before truncation.
+    - max_output_chars: Effective output limit after applying the hard cap.
 
     Execution is limited to 30 seconds. If the command times out, the tool
     returns success=False, return_code=None, and includes the timeout details in
@@ -102,22 +225,35 @@ def shell(command : str):
     """
     try :
         result = subprocess.run(
-            ["cmd","/c",command],
+            [_git_bash_executable(), "--noprofile", "--norc", "-lc", command],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30
         )
+        output = _limit_shell_output(result.stdout, result.stderr, max_output_chars)
         return {
             "success": result.returncode == 0,
             "return_code":result.returncode,
-            "stdout":result.stdout,
-            "stderr":result.stderr
+            **output
         }
-    except subprocess.TimeoutExpired as t:
+    except FileNotFoundError as e:
+        output = _limit_shell_output("", str(e), max_output_chars)
         return {
             "success": False,
             "return_code": None,
-            "stdout": t.stdout or "",
-            "stderr": f"Command timed out after {t.timeout} seconds."
+            **output
+        }
+    except subprocess.TimeoutExpired as t:
+        output = _limit_shell_output(
+            t.stdout,
+            f"Command timed out after {t.timeout} seconds.",
+            max_output_chars
+        )
+        return {
+            "success": False,
+            "return_code": None,
+            **output
         }
     
