@@ -1,16 +1,211 @@
+from pathlib import Path
 from tavily import TavilyClient
 from dotenv import load_dotenv
-import os 
+from typing import Literal
+import os
 import subprocess
 import shutil
 
 
 load_dotenv(dotenv_path=".env")
-client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 MAX_SHELL_OUTPUT_CHARS = 5_000
 DEFAULT_SHELL_OUTPUT_CHARS = MAX_SHELL_OUTPUT_CHARS
-                      
+MAX_FILE_OUTPUT_CHARS = 20_000
+DEFAULT_FILE_OUTPUT_CHARS = 5_000
+WORKSPACE = Path(os.getenv("WORKSPACE_DIR", os.getcwd())).resolve()
+_tavily_client = None
+
+
+def _get_tavily_client():
+    global _tavily_client
+    if _tavily_client is None:
+        api_key = os.getenv("TAVILY_API_KEY")
+        if not api_key:
+            raise RuntimeError("TAVILY_API_KEY is not configured.")
+        _tavily_client = TavilyClient(api_key=api_key)
+    return _tavily_client
+
+
+def _tool_result(success=False, error=None, **data):
+    return {"success": success, "error": error, **data}
+
+
+def _safe_path(user_path: str) -> Path:
+    """Resolve a user path inside the configured workspace."""
+    if not user_path or not str(user_path).strip():
+        raise ValueError("Path cannot be empty.")
+
+    path = Path(str(user_path)).expanduser()
+    target = path.resolve() if path.is_absolute() else (WORKSPACE / path).resolve()
+
+    if target != WORKSPACE and WORKSPACE not in target.parents:
+        raise ValueError(f"Access denied: '{user_path}' is outside the workspace.")
+
+    return target
+
+
+def _normalize_file_limit(max_chars):
+    if max_chars is None:
+        return None
+    try:
+        limit = int(max_chars)
+    except (TypeError, ValueError):
+        limit = DEFAULT_FILE_OUTPUT_CHARS
+    if limit < 0:
+        return None
+    return min(limit, MAX_FILE_OUTPUT_CHARS)
+
+
+def _truncate_file_content(text, max_chars):
+    limit = _normalize_file_limit(max_chars)
+    if limit is None or len(text) <= limit:
+        return text, False
+
+    marker = "\n...[output truncated]...\n"
+    if limit <= len(marker):
+        return text[:limit], True
+
+    head_len = (limit - len(marker)) // 2
+    tail_len = limit - len(marker) - head_len
+    return text[:head_len] + marker + text[-tail_len:], True
+
+
+def read_file(path: str, encoding: str = "utf-8", max_chars: int = DEFAULT_FILE_OUTPUT_CHARS) -> dict:
+    """Read a text file inside the workspace and return structured content."""
+    try:
+        safe = _safe_path(path)
+        content = safe.read_text(encoding=encoding)
+        original_chars = len(content)
+        content, truncated = _truncate_file_content(content, max_chars)
+        return _tool_result(
+            True,
+            path=str(safe),
+            content=content,
+            truncated=truncated,
+            original_chars=original_chars,
+        )
+    except Exception as e:
+        return _tool_result(False, str(e), path=path, content=None, truncated=False)
+
+
+def write_file(
+    path: str,
+    content: str,
+    encoding: str = "utf-8",
+    overwrite: bool = False,
+) -> dict:
+    """Create or overwrite a text file inside the workspace."""
+    try:
+        safe = _safe_path(path)
+        if safe.exists() and not overwrite:
+            return _tool_result(
+                False,
+                "File already exists and overwrite=False.",
+                path=str(safe),
+                bytes_written=0,
+            )
+
+        safe.parent.mkdir(parents=True, exist_ok=True)
+        data = str(content).encode(encoding)
+        safe.write_bytes(data)
+        return _tool_result(True, path=str(safe), bytes_written=len(data))
+    except Exception as e:
+        return _tool_result(False, str(e), path=path, bytes_written=0)
+
+
+def edit_file(
+    path: str,
+    old_str: str,
+    new_str: str,
+    encoding: str = "utf-8",
+    allow_multiple: bool = False,
+) -> dict:
+    """Replace text in a file inside the workspace."""
+    try:
+        if old_str == "":
+            return _tool_result(
+                False,
+                "old_str cannot be empty.",
+                path=path,
+                occurrences=0,
+                replacements=0,
+            )
+
+        safe = _safe_path(path)
+        text = safe.read_text(encoding=encoding)
+        occurrences = text.count(old_str)
+        if occurrences == 0:
+            return _tool_result(
+                False,
+                "Substring not found.",
+                path=str(safe),
+                occurrences=0,
+                replacements=0,
+            )
+        if occurrences > 1 and not allow_multiple:
+            return _tool_result(
+                False,
+                "Substring appears multiple times. Set allow_multiple=True to replace all occurrences.",
+                path=str(safe),
+                occurrences=occurrences,
+                replacements=0,
+            )
+
+        replacements = occurrences if allow_multiple else 1
+        safe.write_text(text.replace(old_str, new_str, replacements), encoding=encoding)
+        return _tool_result(
+            True,
+            path=str(safe),
+            occurrences=occurrences,
+            replacements=replacements,
+        )
+    except Exception as e:
+        return _tool_result(False, str(e), path=path, occurrences=0, replacements=0)
+
+
+def list_files(path: str = ".", pattern: str = "*", recursive: bool = False, max_results: int = 200) -> dict:
+    """List files and directories inside the workspace."""
+    try:
+        safe = _safe_path(path)
+        if not safe.exists():
+            return _tool_result(False, "Path does not exist.", path=str(safe), entries=[])
+
+        max_results = max(0, min(int(max_results), 1_000))
+        iterator = safe.rglob(pattern) if recursive else safe.glob(pattern)
+        entries = []
+        for item in iterator:
+            if item == safe:
+                continue
+            entries.append(
+                {
+                    "path": str(item.relative_to(WORKSPACE)),
+                    "type": "dir" if item.is_dir() else "file",
+                    "size": item.stat().st_size if item.is_file() else None,
+                }
+            )
+            if len(entries) >= max_results:
+                break
+
+        entries.sort(key=lambda item: (item["type"], item["path"].lower()))
+        return _tool_result(True, path=str(safe), entries=entries, count=len(entries))
+    except Exception as e:
+        return _tool_result(False, str(e), path=path, entries=[], count=0)
+
+
+def delete_file(path: str) -> dict:
+    """Delete one file inside the workspace."""
+    try:
+        safe = _safe_path(path)
+        if not safe.exists():
+            return _tool_result(False, "File does not exist.", path=str(safe))
+        if not safe.is_file():
+            return _tool_result(False, "Path is not a file.", path=str(safe))
+        safe.unlink()
+        return _tool_result(True, path=str(safe))
+    except Exception as e:
+        return _tool_result(False, str(e), path=path)
+
 
 def _git_bash_executable():
     """Return the Git Bash executable path, avoiding Windows/WSL bash shims."""
@@ -123,7 +318,7 @@ def _limit_shell_output(stdout, stderr, max_output_chars):
     }
 
 
-def web_search(query : str,search_depth='basic',max_results=5,timerange=None,chunks_per_source=3):
+def web_search(query : str,search_depth : Literal['basic','advanced','fast','ultra-fast'] ='basic',max_results=5,timerange =None,chunks_per_source=3):
     """Search across the web for any information,news,update or help.\n
     Uses these parameters in the tool call :\n
     
@@ -145,7 +340,7 @@ def web_search(query : str,search_depth='basic',max_results=5,timerange=None,chu
     Use chunks_per_source to define the maximum number of relevant chunks returned per source and to control the content length. Required range: 1 <= x <= 3
 
     """
-    response = client.search(
+    response = _get_tavily_client().search(
     query=query,
     search_depth=search_depth,
     max_results=max_results,
@@ -155,7 +350,7 @@ def web_search(query : str,search_depth='basic',max_results=5,timerange=None,chu
     
     return response
 
-def web_fetch(url : str,query=None,chunks_per_source=3,extract_depth="basic"):
+def web_fetch(url : str,query=None,chunks_per_source=3,extract_depth : Literal['basic','advanced'] ="basic"):
     """Fetch and extract readable content from a URL for an agent.
 
     This tool lets the agent retrieve page content from a specific source when
@@ -181,9 +376,9 @@ def web_fetch(url : str,query=None,chunks_per_source=3,extract_depth="basic"):
     The Tavily extraction response containing the extracted content, raw_content,
     and extraction metadata returned by the API.
     """
-    response = client.extract(
+    response = _get_tavily_client().extract(
         urls=url,
-        query=query,
+        query=str(query),
         chunks_per_source=chunks_per_source,
         extract_depth=extract_depth
     )

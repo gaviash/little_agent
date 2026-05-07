@@ -1,7 +1,15 @@
-from tools import web_search,web_fetch,shell
+from tools import (
+    delete_file,
+    edit_file,
+    list_files,
+    read_file,
+    shell,
+    web_fetch,
+    web_search,
+    write_file,
+)
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.llms.ollama import Ollama
-from llama_index.core import PromptTemplate
 from llama_index.core.memory import Memory
 import os
 
@@ -38,7 +46,16 @@ def start():
             request_timeout=100.0
         ),
         system_prompt=system_prompt,
-        tools=[web_search,web_fetch,shell]   
+        tools=[
+            web_search,
+            web_fetch,
+            shell,
+            read_file,
+            write_file,
+            edit_file,
+            list_files,
+            delete_file,
+        ]
     )
     
     memory = Memory.from_defaults(
