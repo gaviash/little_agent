@@ -48,8 +48,6 @@ def test_start_builds_function_agent_with_all_tools(monkeypatch):
         "read_file",
         "write_file",
         "edit_file",
-        "list_files",
-        "delete_file",
     ]
     assert "Tu es Gustave" in agent.kwargs["system_prompt"]
 

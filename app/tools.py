@@ -45,24 +45,24 @@ def _safe_path(user_path: str) -> Path:
     return target
 
 
-def _normalize_file_limit(max_chars):
-    if max_chars is None:
+def _normalize_limit(value, default, maximum, allow_unlimited=False):
+    if value is None and allow_unlimited:
         return None
     try:
-        limit = int(max_chars)
+        limit = int(value)
     except (TypeError, ValueError):
-        limit = DEFAULT_FILE_OUTPUT_CHARS
-    if limit < 0:
+        limit = default
+    if limit < 0 and allow_unlimited:
         return None
-    return min(limit, MAX_FILE_OUTPUT_CHARS)
+    return max(0, min(limit, maximum))
 
 
-def _truncate_file_content(text, max_chars):
-    limit = _normalize_file_limit(max_chars)
+def _truncate_text(text, limit, marker="\n...[truncated output]...\n"):
     if limit is None or len(text) <= limit:
         return text, False
 
-    marker = "\n...[output truncated]...\n"
+    if limit <= 0:
+        return "", True
     if limit <= len(marker):
         return text[:limit], True
 
@@ -72,12 +72,41 @@ def _truncate_file_content(text, max_chars):
 
 
 def read_file(path: str, encoding: str = "utf-8", max_chars: int = DEFAULT_FILE_OUTPUT_CHARS) -> dict:
-    """Read a text file inside the workspace and return structured content."""
+    """Read a text file from the workspace.
+
+    Use this tool when the agent needs to inspect source code, configuration,
+    notes, logs, or any other text file before answering or editing. The path is
+    resolved relative to the configured WORKSPACE_DIR, or to the current working
+    directory when WORKSPACE_DIR is not set. Absolute paths are accepted only if
+    they remain inside the workspace.
+
+    Parameters:
+    - path: File path to read, relative to the workspace whenever possible.
+    - encoding: Text encoding used to decode the file. Defaults to "utf-8".
+    - max_chars: Maximum number of characters returned in content. Negative
+      values or None disable truncation. Values above MAX_FILE_OUTPUT_CHARS are
+      capped to protect the agent context.
+
+    Returns:
+    A dictionary with:
+    - success: True when the file was read successfully.
+    - error: Error message when success is False, otherwise None.
+    - path: Resolved absolute file path when available.
+    - content: File content, possibly truncated.
+    - truncated: True when content was shortened.
+    - original_chars: Original character count before truncation.
+    """
     try:
         safe = _safe_path(path)
         content = safe.read_text(encoding=encoding)
         original_chars = len(content)
-        content, truncated = _truncate_file_content(content, max_chars)
+        limit = _normalize_limit(
+            max_chars,
+            DEFAULT_FILE_OUTPUT_CHARS,
+            MAX_FILE_OUTPUT_CHARS,
+            allow_unlimited=True,
+        )
+        content, truncated = _truncate_text(content, limit, "\n...[output truncated]...\n")
         return _tool_result(
             True,
             path=str(safe),
@@ -95,7 +124,27 @@ def write_file(
     encoding: str = "utf-8",
     overwrite: bool = False,
 ) -> dict:
-    """Create or overwrite a text file inside the workspace."""
+    """Create or overwrite a text file inside the workspace.
+
+    Use this tool when the agent needs to create a new file or replace the full
+    content of an existing file. Parent directories are created automatically.
+    For targeted changes inside an existing file, prefer edit_file.
+
+    Parameters:
+    - path: Destination file path, relative to the workspace whenever possible.
+    - content: Full text content to write. Non-string values are converted with
+      str before encoding.
+    - encoding: Text encoding used to write the file. Defaults to "utf-8".
+    - overwrite: When False, an existing file is left untouched and the tool
+      returns an error. Set True only when replacing the full file is intended.
+
+    Returns:
+    A dictionary with:
+    - success: True when the file was written successfully.
+    - error: Error message when success is False, otherwise None.
+    - path: Resolved absolute file path when available.
+    - bytes_written: Number of encoded bytes written, or 0 on failure.
+    """
     try:
         safe = _safe_path(path)
         if safe.exists() and not overwrite:
@@ -121,7 +170,30 @@ def edit_file(
     encoding: str = "utf-8",
     allow_multiple: bool = False,
 ) -> dict:
-    """Replace text in a file inside the workspace."""
+    """Replace an exact text fragment inside a workspace file.
+
+    Use this tool for precise edits where the original text is known. By default
+    the tool refuses ambiguous replacements when old_str appears more than once;
+    this prevents accidental broad edits. Set allow_multiple=True only when all
+    occurrences should be replaced.
+
+    Parameters:
+    - path: File path to edit, relative to the workspace whenever possible.
+    - old_str: Exact text fragment to find. Empty strings are rejected.
+    - new_str: Replacement text.
+    - encoding: Text encoding used to read and write the file. Defaults to
+      "utf-8".
+    - allow_multiple: Replace every occurrence when True. When False, the tool
+      only edits the file if old_str appears exactly once.
+
+    Returns:
+    A dictionary with:
+    - success: True when at least one replacement was written.
+    - error: Error message when success is False, otherwise None.
+    - path: Resolved absolute file path when available.
+    - occurrences: Number of matches found before editing.
+    - replacements: Number of replacements written.
+    """
     try:
         if old_str == "":
             return _tool_result(
@@ -164,49 +236,6 @@ def edit_file(
         return _tool_result(False, str(e), path=path, occurrences=0, replacements=0)
 
 
-def list_files(path: str = ".", pattern: str = "*", recursive: bool = False, max_results: int = 200) -> dict:
-    """List files and directories inside the workspace."""
-    try:
-        safe = _safe_path(path)
-        if not safe.exists():
-            return _tool_result(False, "Path does not exist.", path=str(safe), entries=[])
-
-        max_results = max(0, min(int(max_results), 1_000))
-        iterator = safe.rglob(pattern) if recursive else safe.glob(pattern)
-        entries = []
-        for item in iterator:
-            if item == safe:
-                continue
-            entries.append(
-                {
-                    "path": str(item.relative_to(WORKSPACE)),
-                    "type": "dir" if item.is_dir() else "file",
-                    "size": item.stat().st_size if item.is_file() else None,
-                }
-            )
-            if len(entries) >= max_results:
-                break
-
-        entries.sort(key=lambda item: (item["type"], item["path"].lower()))
-        return _tool_result(True, path=str(safe), entries=entries, count=len(entries))
-    except Exception as e:
-        return _tool_result(False, str(e), path=path, entries=[], count=0)
-
-
-def delete_file(path: str) -> dict:
-    """Delete one file inside the workspace."""
-    try:
-        safe = _safe_path(path)
-        if not safe.exists():
-            return _tool_result(False, "File does not exist.", path=str(safe))
-        if not safe.is_file():
-            return _tool_result(False, "Path is not a file.", path=str(safe))
-        safe.unlink()
-        return _tool_result(True, path=str(safe))
-    except Exception as e:
-        return _tool_result(False, str(e), path=path)
-
-
 def _git_bash_executable():
     """Return the Git Bash executable path, avoiding Windows/WSL bash shims."""
     candidates = [
@@ -241,15 +270,6 @@ def _git_bash_executable():
     )
 
 
-def _normalize_output_limit(max_output_chars):
-    try:
-        limit = int(max_output_chars)
-    except (TypeError, ValueError):
-        limit = DEFAULT_SHELL_OUTPUT_CHARS
-
-    return max(0, min(limit, MAX_SHELL_OUTPUT_CHARS))
-
-
 def _ensure_text(value):
     if value is None:
         return ""
@@ -258,34 +278,17 @@ def _ensure_text(value):
     return value
 
 
-def _truncate_text(text, limit):
-    if len(text) <= limit:
-        return text, False
-    if limit <= 0:
-        return "", True
-
-    marker = "\n...[truncated output]...\n"
-    head_len = 0
-    tail_len = 0
-    for _ in range(3):
-        if limit <= len(marker):
-            return text[:limit], True
-
-        head_len = (limit - len(marker)) // 2
-        tail_len = limit - len(marker) - head_len
-        omitted_chars = len(text) - head_len - tail_len
-        marker = f"\n...[truncated {omitted_chars} chars]...\n"
-
-    return text[:head_len] + marker + text[-tail_len:], True
-
-
 def _limit_shell_output(stdout, stderr, max_output_chars):
     stdout = _ensure_text(stdout)
     stderr = _ensure_text(stderr)
-    limit = _normalize_output_limit(max_output_chars)
+    limit = _normalize_limit(
+        max_output_chars,
+        DEFAULT_SHELL_OUTPUT_CHARS,
+        MAX_SHELL_OUTPUT_CHARS,
+    )
     total_chars = len(stdout) + len(stderr)
 
-    if total_chars <= limit:
+    if total_chars <= limit: # type: ignore
         return {
             "stdout": stdout,
             "stderr": stderr,
@@ -296,8 +299,8 @@ def _limit_shell_output(stdout, stderr, max_output_chars):
         }
 
     if stdout and stderr:
-        stdout_limit = limit * len(stdout) // total_chars
-        stderr_limit = limit - stdout_limit
+        stdout_limit = limit * len(stdout) // total_chars # type: ignore
+        stderr_limit = limit - stdout_limit # type: ignore
     elif stdout:
         stdout_limit = limit
         stderr_limit = 0
@@ -344,7 +347,7 @@ def web_search(query : str,search_depth : Literal['basic','advanced','fast','ult
     query=query,
     search_depth=search_depth,
     max_results=max_results,
-    time_range=timerange,
+    time_range=timerange, # type: ignore
     chunks_per_source = chunks_per_source
     )
     

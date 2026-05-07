@@ -1,9 +1,6 @@
 import subprocess
-from pathlib import Path
-
 import pytest
-
-import tools
+import tools # type: ignore
 
 
 @pytest.fixture()
@@ -12,7 +9,7 @@ def isolated_workspace(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_file_tools_create_read_edit_list_and_delete(isolated_workspace):
+def test_file_tools_create_read_and_edit(isolated_workspace):
     write_result = tools.write_file("notes/todo.txt", "alpha beta alpha")
 
     assert write_result["success"] is True
@@ -37,15 +34,7 @@ def test_file_tools_create_read_edit_list_and_delete(isolated_workspace):
     assert read_result["content"] == "gamma beta gamma"
     assert read_result["truncated"] is False
 
-    list_result = tools.list_files(".", recursive=True)
-    assert list_result["success"] is True
-    entries_by_path = {Path(entry["path"]).as_posix(): entry for entry in list_result["entries"]}
-    assert entries_by_path["notes/todo.txt"]["type"] == "file"
-    assert entries_by_path["notes/todo.txt"]["size"] == len("gamma beta gamma")
-
-    delete_result = tools.delete_file("notes/todo.txt")
-    assert delete_result["success"] is True
-    assert not (isolated_workspace / "notes" / "todo.txt").exists()
+    assert (isolated_workspace / "notes" / "todo.txt").read_text() == "gamma beta gamma"
 
 
 def test_read_file_truncates_large_content(isolated_workspace):

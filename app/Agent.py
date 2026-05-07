@@ -1,7 +1,5 @@
 from tools import (
-    delete_file,
     edit_file,
-    list_files,
     read_file,
     shell,
     web_fetch,
@@ -53,8 +51,6 @@ def start():
             read_file,
             write_file,
             edit_file,
-            list_files,
-            delete_file,
         ]
     )
     
