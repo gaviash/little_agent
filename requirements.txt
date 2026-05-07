@@ -5,3 +5,4 @@ llama-index-embeddings-huggingface
 llama-index-readers-file
 dotenv
 tavily-python
+pytest
