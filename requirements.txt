@@ -6,3 +6,4 @@ llama-index-readers-file
 dotenv
 tavily-python
 pytest
+ruff
