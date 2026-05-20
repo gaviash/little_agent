@@ -270,6 +270,24 @@ def _git_bash_executable():
     )
 
 
+def _posix_shell_command_args(command: str):
+    bash = shutil.which("bash")
+    if bash:
+        return [bash, "-lc", command]
+
+    sh = shutil.which("sh")
+    if sh:
+        return [sh, "-c", command]
+
+    raise FileNotFoundError("No POSIX shell was found. Install bash or sh.")
+
+
+def _shell_command_args(command: str):
+    if os.name == "nt":
+        return [_git_bash_executable(), "--noprofile", "--norc", "-lc", command]
+    return _posix_shell_command_args(command)
+
+
 def _ensure_text(value):
     if value is None:
         return ""
@@ -389,14 +407,17 @@ def web_fetch(url : str,query=None,chunks_per_source=3,extract_depth : Literal['
 
 
 def shell(command : str, max_output_chars=DEFAULT_SHELL_OUTPUT_CHARS):
-    """Execute a Git Bash command for an agent and return structured output.
+    """Execute a shell command for an agent and return structured output.
 
     This tool gives the agent controlled access to the local command line through
-    Git Bash (`bash -lc`). Use it for operational tasks such as inspecting files, listing
-    directories, running scripts, checking dependencies, or launching simple
-    diagnostic commands.
-    Prefer Git Bash / POSIX-style commands such as ls, pwd, grep, sed, cat, and
-    python invocations available from the shell.
+    the best available shell for the current operating system. On Windows, it
+    uses Git Bash (`bash -lc`) to provide POSIX-style commands. On Linux/macOS,
+    it uses `bash -lc` when bash is available, then falls back to `sh -c`.
+
+    Use it for operational tasks such as inspecting files, listing directories,
+    running scripts, checking dependencies, or launching simple diagnostic
+    commands. Prefer precise, non-interactive commands such as ls, pwd, grep,
+    sed, cat, and python invocations available from the shell.
 
     Parameters:
     - command: The exact command to execute as a string. The agent should prefer
@@ -423,7 +444,7 @@ def shell(command : str, max_output_chars=DEFAULT_SHELL_OUTPUT_CHARS):
     """
     try :
         result = subprocess.run(
-            [_git_bash_executable(), "--noprofile", "--norc", "-lc", command],
+            _shell_command_args(command),
             capture_output=True,
             text=True,
             encoding="utf-8",

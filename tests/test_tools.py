@@ -75,6 +75,36 @@ def test_shell_returns_structured_success(monkeypatch):
     assert result["stderr"] == ""
 
 
+def test_shell_uses_git_bash_on_windows(monkeypatch):
+    monkeypatch.setattr(tools.os, "name", "nt")
+    monkeypatch.setattr(tools, "_git_bash_executable", lambda: "C:\\Git\\bin\\bash.exe")
+
+    args = tools._shell_command_args("pwd")
+
+    assert args == ["C:\\Git\\bin\\bash.exe", "--noprofile", "--norc", "-lc", "pwd"]
+
+
+def test_shell_uses_bash_on_posix(monkeypatch):
+    monkeypatch.setattr(tools.os, "name", "posix")
+    monkeypatch.setattr(tools.shutil, "which", lambda name: f"/bin/{name}" if name == "bash" else None)
+
+    args = tools._shell_command_args("pwd")
+
+    assert args == ["/bin/bash", "-lc", "pwd"]
+
+
+def test_shell_falls_back_to_sh_on_posix(monkeypatch):
+    def fake_which(name):
+        return "/bin/sh" if name == "sh" else None
+
+    monkeypatch.setattr(tools.os, "name", "posix")
+    monkeypatch.setattr(tools.shutil, "which", fake_which)
+
+    args = tools._shell_command_args("pwd")
+
+    assert args == ["/bin/sh", "-c", "pwd"]
+
+
 def test_shell_handles_timeouts(monkeypatch):
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="sleep 99", timeout=30, output="partial")
