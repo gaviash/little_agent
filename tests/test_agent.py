@@ -25,6 +25,7 @@ def test_start_builds_function_agent_with_all_tools(monkeypatch):
             return {"memory": kwargs}
 
     monkeypatch.setenv("OLLAMA_MODEL", "llama-test")
+    monkeypatch.setenv("OLLAMA_API_KEY", "token-test")
     monkeypatch.setattr(agent_module, "Ollama", FakeOllama)
     monkeypatch.setattr(agent_module, "FunctionAgent", FakeFunctionAgent)
     monkeypatch.setattr(agent_module, "Memory", FakeMemory)
@@ -38,6 +39,8 @@ def test_start_builds_function_agent_with_all_tools(monkeypatch):
         "temperature": 0.2,
         "context_window": 262144,
         "request_timeout": 100.0,
+        "base_url": "https://ollama.com",
+        "headers": {"Authorization": "Bearer token-test"},
     }
 
     tool_names = [tool.__name__ for tool in agent.kwargs["tools"]]
@@ -55,10 +58,21 @@ def test_start_builds_function_agent_with_all_tools(monkeypatch):
 def test_query_forwards_user_message_and_memory():
     calls = {}
 
+    class FakeHandler:
+        async def stream_events(self):
+            if False:
+                yield None
+
+        def __await__(self):
+            async def response():
+                return "response"
+
+            return response().__await__()
+
     class FakeAgent:
-        async def run(self, **kwargs):
+        def run(self, **kwargs):
             calls.update(kwargs)
-            return "response"
+            return FakeHandler()
 
     memory = object()
 
