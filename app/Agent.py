@@ -41,7 +41,11 @@ def start():
             model=str(os.getenv("OLLAMA_MODEL")),
             temperature=0.2,
             context_window=262144,
-            request_timeout=100.0
+            request_timeout=100.0,
+            base_url="https://ollama.com",
+            headers={
+        "Authorization": f"Bearer {os.getenv('OLLAMA_API_KEY')}",
+    }
         ),
         system_prompt=system_prompt,
         tools=[
