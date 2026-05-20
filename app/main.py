@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-
+#Passer a docker
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
