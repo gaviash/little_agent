@@ -62,8 +62,7 @@ def start():
         ],
     )
 
-    memory = Memory.from_defaults(session_id="Dev", token_limit=150000)
-    return Agent, memory
+    return Agent
 
 
 async def query(agent: FunctionAgent, memory: Memory, query: str):

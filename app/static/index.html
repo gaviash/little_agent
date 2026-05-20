@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gustave</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="chat-panel" aria-label="Chat Gustave">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Agent local</p>
+            <h1>Gustave</h1>
+          </div>
+          <div class="session-box" title="Session conservee dans ce navigateur">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="sessionLabel">Nouvelle session</span>
+          </div>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite">
+          <div id="emptyState" class="empty-state">
+            <div class="mark">G</div>
+            <h2>Que voulez vous faire ?</h2>
+            <p>Je suis Gustave,ton assistant personnel</p>
+          </div>
+        </div>
+
+        <form id="chatForm" class="composer">
+          <textarea
+            id="messageInput"
+            name="message"
+            rows="1"
+            placeholder="Demande a Gustave..."
+            autocomplete="off"
+            required
+          ></textarea>
+          <div class="composer-actions">
+            <button id="resetButton" class="secondary" type="button">Nouvelle session</button>
+            <button id="sendButton" type="submit">Envoyer</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

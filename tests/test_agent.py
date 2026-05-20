@@ -18,22 +18,14 @@ def test_start_builds_function_agent_with_all_tools(monkeypatch):
             self.kwargs = kwargs
             created["agent"] = self
 
-    class FakeMemory:
-        @classmethod
-        def from_defaults(cls, **kwargs):
-            created["memory_kwargs"] = kwargs
-            return {"memory": kwargs}
-
     monkeypatch.setenv("OLLAMA_MODEL", "llama-test")
     monkeypatch.setenv("OLLAMA_API_KEY", "token-test")
     monkeypatch.setattr(agent_module, "Ollama", FakeOllama)
     monkeypatch.setattr(agent_module, "FunctionAgent", FakeFunctionAgent)
-    monkeypatch.setattr(agent_module, "Memory", FakeMemory)
 
-    agent, memory = agent_module.start()
+    agent = agent_module.start()
 
     assert agent is created["agent"]
-    assert memory == {"memory": {"session_id": "Dev", "token_limit": 150000}}
     assert agent.kwargs["llm"].kwargs == {
         "model": "llama-test",
         "temperature": 0.2,
