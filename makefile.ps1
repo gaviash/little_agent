@@ -3,7 +3,7 @@ param(
 )
 switch ($Command) {
     "run" {
-        python app/main.py
+        fastapi app/main.py
     }
 
     "test" {
