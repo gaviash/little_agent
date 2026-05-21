@@ -74,3 +74,20 @@ def test_generate_reuses_existing_session_memory(monkeypatch):
         ("fake-agent", memory_by_session["session-a"], "one"),
         ("fake-agent", memory_by_session["session-a"], "two"),
     ]
+
+
+def test_static_assets_are_served(monkeypatch):
+    monkeypatch.setattr(main_module, "start", lambda: "fake-agent")
+
+    with TestClient(main_module.app) as client:
+        index = client.get("/")
+        css = client.get("/static/styles.css")
+        js = client.get("/static/app.js")
+
+    assert index.status_code == 200
+    assert 'href="static/styles.css"' in index.text
+    assert 'src="static/app.js"' in index.text
+    assert css.status_code == 200
+    assert "text/css" in css.headers["content-type"]
+    assert js.status_code == 200
+    assert "javascript" in js.headers["content-type"]

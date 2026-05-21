@@ -1,5 +1,5 @@
 run:
-	python app/main.py 
+	fastapi app/main.py 
 
 test:
 	pytest tests -q

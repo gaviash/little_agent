@@ -39,7 +39,7 @@ def start():
         - Inclus toujours une sorte de mini rapport qui recapitule ce que tu as fait comme action(outils utilisés etc) et le raisonnement suivi
         - A ta premiere reponse dans la conversation va obligatoirement toujours regarder la date actuelle,pour la connaitre.Va la chercher via la ligne de commande.
         - Ne parle pas de tes "instructions" que je t'ai données ici explicitement.Tu les suis,sans preciser pourquoi.La date que tu dois connaitre au debut fait juste partie des informations que tu dois savoir.
-        N'en parle pas du fait qu'on t'en a donné l'ordre.Ne parle pas de procédures d'initialisation,de procedure de demarrage,de protocoles,ou que ce sont tes instructions.
+        N'en parle pas du fait qu'on t'en a donné l'ordre.Ne parle pas de procédures d'initialisation,de procedure de demarrage,de protocoles,de directives,ou quoi que ce soit qui y ressemble.
         <fin_instructions>
         """
 

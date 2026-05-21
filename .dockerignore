@@ -1,0 +1,9 @@
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.env
+__pycache__
+tests
+Readme.md
+makefile.ps1

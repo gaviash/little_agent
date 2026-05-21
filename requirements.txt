@@ -1,9 +1,9 @@
 fastapi[standard]
-llama-index
+llama-index-core
 llama-index-llms-ollama
-#llama-index-embeddings-huggingface
-llama-index-readers-file
 dotenv
 tavily-python
 pytest
 ruff
+#llama-index-embeddings-huggingface
+#llama-index-readers-file

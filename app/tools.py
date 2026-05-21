@@ -419,6 +419,12 @@ def shell(command : str, max_output_chars=DEFAULT_SHELL_OUTPUT_CHARS):
     commands. Prefer precise, non-interactive commands such as ls, pwd, grep,
     sed, cat, and python invocations available from the shell.
 
+    The shell is not interactive: it cannot answer prompts, menus, password
+    requests, or y/N confirmations after the command has started. When a command
+    may ask for confirmation, pass explicit non-interactive flags such as -y,
+    --yes, --no-input, --force, or the tool-specific equivalent when that is the
+    intended behavior.
+
     Parameters:
     - command: The exact command to execute as a string. The agent should prefer
       precise, non-interactive commands and avoid destructive operations unless
