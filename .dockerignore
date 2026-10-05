@@ -5,5 +5,5 @@
 .env
 __pycache__
 tests
-Readme.md
+README.md
 makefile.ps1
